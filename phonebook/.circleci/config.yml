@@ -1,0 +1,120 @@
+executors:
+  node:
+    docker:
+      - image: circleci/node:8
+
+aliases:
+  restore_cache: &restore_cache
+    restore_cache:
+      name: Restore Npm Package Cache
+      keys:
+        - yarn-cache-netlify-{{ checksum "yarn.lock" }}
+
+  install_node_modules: &install_node_modules
+    run:
+      name: Install dependencies
+      command: yarn install
+
+  save_cache: &save_cache
+    save_cache:
+      name: Save NPM package cache
+      key: yarn-cache-netlify-{{ checksum "yarn.lock" }}
+      paths:
+        - ./node_modules
+
+version: 2.1
+
+jobs:
+  validate:
+    executor: node
+    steps:
+      - checkout
+      - <<: *restore_cache
+      - <<: *install_node_modules
+      - <<: *save_cache
+      - run:
+          name: Validate
+          command: yarn validate
+
+  build:
+    executor: node
+    steps:
+      - checkout
+      - <<: *restore_cache
+      - <<: *install_node_modules
+      - run:
+          name: Build
+          command: yarn build
+      - persist_to_workspace:
+          root: ./
+          paths:
+            - ./
+
+  deploy-staging:
+    executor: node
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ./
+      - <<: *restore_cache
+      - <<: *install_node_modules
+      - deploy:
+          name: Netlify Deploy
+          command: | 
+            npx netlify deploy --site $STAGING_NETLIFY_SITE_ID --auth $NETLIFY_ACCESS_TOKEN --prod --dir=./build -p
+  deploy-production:
+    executor: node
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ./
+      - <<: *restore_cache
+      - <<: *install_node_modules
+      - deploy:
+          name: Netlify Deploy
+          command: | 
+            npx netlify deploy --site $PRODUCTION_NETLIFY_SITE_ID --auth $NETLIFY_ACCESS_TOKEN --prod --dir=./build -p
+
+workflows:
+  version: 2
+  staging-workflow:
+    jobs:
+      - validate:
+          filters:
+            branches:
+              only:
+                - dev
+      - build:
+          filters:
+            branches:
+              only:
+                - dev
+      - deploy-staging:
+          filters:
+            branches:
+              only:
+                - dev
+          requires:
+            - validate
+            - build
+
+  production-workflow:
+    jobs:
+      - validate:
+          filters:
+            branches:
+              only:
+                - master
+      - build:
+          filters:
+            branches:
+              only:
+                - master
+      - deploy-production:
+          filters:
+            branches:
+              only:
+                - master
+          requires:
+            - build
+            - validate
